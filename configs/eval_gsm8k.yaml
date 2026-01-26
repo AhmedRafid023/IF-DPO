@@ -1,0 +1,30 @@
+### Model
+model_name_or_path: google/gemma-3-4b-it
+adapter_name_or_path: output/gemma3-self-dpo
+
+### Method
+stage: sft
+do_predict: true
+finetuning_type: lora
+predict_with_generate: true    # <--- FIXES ERROR #2
+
+### Dataset
+eval_dataset: gsm8k_test       # Must match dataset_info.json
+template: gemma
+# lang: en                     # <--- REMOVED (Fixes Error #1)
+# n_shot: 8                    # <--- REMOVED (Fixes Error #1)
+
+### Runtime
+cutoff_len: 2048
+# max_samples: 500             # Comment out to run the full dataset
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### Generation
+max_new_tokens: 512            # Giving it enough space to think
+do_sample: false               # Greedy decoding (Temperature 0)
+
+### Output
+output_dir: prediction/gsm8k-self-dpo
+overwrite_output_dir: true
+per_device_eval_batch_size: 16

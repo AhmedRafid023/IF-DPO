@@ -1,0 +1,21 @@
+### Model
+model_name_or_path: google/gemma-3-4b-it
+adapter_name_or_path: output/gemma3-self-dpo  # <--- Loads the adapter we just trained
+
+### Method
+stage: sft
+do_predict: true                      # <--- key: Predict mode
+finetuning_type: lora
+predict_with_generate: true
+
+### Dataset
+eval_dataset: dpo_test          # defined in dataset_info.json
+template: gemma
+cutoff_len: 1024
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### Output
+output_dir: prediction/gemma3-self-dpo
+overwrite_output_dir: true
+per_device_eval_batch_size: 8

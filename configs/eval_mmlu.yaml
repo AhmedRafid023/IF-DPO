@@ -1,0 +1,26 @@
+### Model
+model_name_or_path: google/gemma-3-4b-it
+adapter_name_or_path: output/gemma3-dpo
+
+### Method
+stage: sft
+do_predict: true
+finetuning_type: lora
+predict_with_generate: true
+
+### Dataset
+eval_dataset: mmlu_test
+template: choice
+cutoff_len: 2048
+max_samples: 1000
+overwrite_cache: true
+preprocessing_num_workers: 4
+
+### Generation
+max_new_tokens: 5
+do_sample: false
+
+### Output
+output_dir: prediction/mmlu-dpo
+overwrite_output_dir: true
+per_device_eval_batch_size: 16
