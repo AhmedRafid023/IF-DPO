@@ -1,5 +1,5 @@
 ### Model
-model_name_or_path: google/gemma-3-4b-it
+model_name_or_path: allenai/Llama-3.1-Tulu-3-8B-SFT
 # adapter_name_or_path:  <--- REMOVED! This forces it to use the base model.
 
 ### Method
@@ -9,14 +9,12 @@ predict_with_generate: true
 
 ### Dataset
 eval_dataset: dpo_test            # defined in dataset_info.json
-template: gemma
+template: llama3
 cutoff_len: 1024
-max_samples: 100
 overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### Output
-output_dir: saves/gemma-zero-shot  # <--- Different output folder
+output_dir: prediction/base-dpo-llama  # <--- Different output folder
 overwrite_output_dir: true
-per_device_eval_batch_size: 4
-report_to: none
+per_device_eval_batch_size: 16

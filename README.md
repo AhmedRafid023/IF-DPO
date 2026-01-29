@@ -33,3 +33,6 @@ docker run --gpus all --ipc=host --rm --env-file .env -v $(pwd):/app dpo-v1 pyth
 
 
 docker run --gpus all --ipc=host --rm --env-file .env -v $(pwd):/app dpo-v1 python train_model.py --config configs/test.yaml
+
+
+docker run --gpus all --ipc=host --rm --env-file .env -v $(pwd):/app dpo-v1 python influence.py

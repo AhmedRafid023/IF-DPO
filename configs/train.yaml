@@ -43,26 +43,29 @@ trust_remote_code: true
 stage: dpo
 do_train: true
 finetuning_type: lora
+lora_rank: 8                 # Keep small for efficiency
+lora_alpha: 16
 lora_target: q_proj,v_proj    # <--- FIXED: Only Query and Value projections
 pref_beta: 0.1
 pref_loss: sigmoid
 
 ### Dataset
-dataset: self_dpo_train
-template: gemma
-cutoff_len: 2048
+dataset: dpo_train
+# dataset: self_dpo_train      # for self DPO
+template: llama3
+cutoff_len: 1024
 overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### Output
-output_dir: output/llama3-self-dpo
+output_dir: output/llama3-dpo
 logging_steps: 5
 save_steps: 50
 plot_loss: true
 overwrite_output_dir: true
 
 ### Train
-per_device_train_batch_size: 4
+per_device_train_batch_size: 8
 gradient_accumulation_steps: 32
 learning_rate: 1.0e-5         # <--- FIXED: Increased from 5.0e-6 to 1.0e-5
 num_train_epochs: 2.0
