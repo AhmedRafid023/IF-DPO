@@ -152,6 +152,7 @@ cython_debug/
 *.onnx
 
 # Training outputs
+influence_scoring_results
 output/
 prediction/
 data/

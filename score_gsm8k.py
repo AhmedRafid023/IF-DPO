@@ -1,74 +1,85 @@
 import json
 import re
-import sys
 
-def extract_answer(text):
+def normalize_number(x):
+    """Convert string number to canonical form"""
+    try:
+        if "." in x:
+            x = str(int(float(x)))
+        return x
+    except:
+        return None
+
+def extract_gold_answer(text):
     """
-    Extracts the last number from the text.
-    Standard GSM8K answers end with '#### <number>'
+    GSM8K gold answers ALWAYS use:
+    #### <number>
     """
     if not text:
         return None
-    # Look for the standard '####' marker first
-    if "####" in text:
-        return text.split("####")[-1].strip()
-    
-    # Fallback: Find the very last number in the text (integer or float)
-    # This regex handles commas (1,000) and decimals (1.5)
-    numbers = re.findall(r'-?\d{1,3}(?:,\d{3})*(?:\.\d+)?', text)
-    if numbers:
-        return numbers[-1].replace(',', '')
-    return None
+    if "####" not in text:
+        return None
+    ans = text.split("####")[-1].strip()
+    return normalize_number(ans)
 
-def main(file_path):
-    print(f"📊 Scoring file: {file_path}")
-    
+def extract_pred_answer(text):
+    """
+    Robust extraction for messy model outputs
+    """
+    if not text:
+        return None
+
+    # 1️⃣ If model accidentally outputs ####
+    if "####" in text:
+        return normalize_number(text.split("####")[-1].strip())
+
+    # 2️⃣ Remove code blocks (```...```)
+    text = re.sub(r"```.*?```", "", text, flags=re.S)
+
+    # 3️⃣ Remove common noise tokens
+    text = re.sub(r"(# Output:.*|def .*|print\(.*?\))", "", text)
+
+    # 4️⃣ Extract all standalone numbers (integers or floats)
+    numbers = re.findall(r"-?\d+(?:\.\d+)?", text)
+
+    if not numbers:
+        return None
+
+    # GSM8K convention → final numeric answer is LAST meaningful number
+    return normalize_number(numbers[-1])
+
+def score_file(path):
     correct = 0
     total = 0
-    
-    try:
-        with open(file_path, 'r') as f:
-            for line in f:
-                data = json.loads(line)
-                
-                # Get model output and ground truth
-                # LLaMA Factory saves output in 'predict' and ground truth in 'label' or 'response'
-                prediction = data.get('predict', '')
-                ground_truth = data.get('label', '')
-                
-                # Extract the numbers
-                pred_num = extract_answer(prediction)
-                ref_num = extract_answer(ground_truth)
-                
-                if ref_num is None:
-                    continue # Skip bad data
-                    
-                total += 1
-                
-                # Check for exact match (numerical equality)
-                try:
-                    # Convert to float to handle 42 vs 42.0
-                    if pred_num and float(pred_num) == float(ref_num):
-                        correct += 1
-                except ValueError:
-                    # If conversion fails, check string match
-                    if pred_num == ref_num:
-                        correct += 1
 
-        if total == 0:
-            print("❌ No valid samples found.")
-            return
+    print(f"📊 Scoring GSM8K file: {path}")
 
-        accuracy = (correct / total) * 100
-        print(f"\n✅ Final Results:")
-        print(f"   Total Samples: {total}")
-        print(f"   Correct:       {correct}")
-        print(f"   Accuracy:      {accuracy:.2f}%")
-        
-    except FileNotFoundError:
-        print(f"❌ Error: File not found at {file_path}")
+    with open(path, "r") as f:
+        for line in f:
+            ex = json.loads(line)
+
+            pred = ex.get("predict", "")
+            gold = ex.get("label", "")
+
+            gold_ans = extract_gold_answer(gold)
+            pred_ans = extract_pred_answer(pred)
+
+            if gold_ans is None:
+                continue
+
+            total += 1
+            if pred_ans == gold_ans:
+                correct += 1
+
+    if total == 0:
+        print("❌ No valid GSM8K samples found.")
+        return
+
+    acc = 100 * correct / total
+    print("\n✅ GSM8K Results")
+    print(f"   Total samples: {total}")
+    print(f"   Correct:       {correct}")
+    print(f"   Accuracy:      {acc:.2f}%")
 
 if __name__ == "__main__":
-    # Point this to your generated file
-    file_path = "prediction/gsm8k-dpo/generated_predictions.jsonl"
-    main(file_path)
+    score_file("prediction/gsm8k-tulu-base/generated_predictions.jsonl")

@@ -15,6 +15,6 @@ overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### Output
-output_dir: prediction/base-dpo-llama  # <--- Different output folder
+output_dir: prediction/tulu_base  # <--- Different output folder
 overwrite_output_dir: true
 per_device_eval_batch_size: 16

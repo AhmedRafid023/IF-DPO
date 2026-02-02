@@ -19,7 +19,8 @@ class Config:
 
     # --- Path Settings ---
     # Update this to point to your actual file location
-    dataset_path = "data/train.json" 
+    train_path = "data/train.json"  # <--- UPDATED: Source for scoring
+    val_path = "data/test.json"     # <--- ADDED: Source for validation (Compass)
     output_dir = "./influence_scoring_results"
 
     # --- Model Settings ---
@@ -160,38 +161,30 @@ def get_data():
     if tokenizer.pad_token is None: 
         tokenizer.pad_token = tokenizer.eos_token
     
-    print(f"Loading data from {Config.dataset_path}...")
-    
-    # Load raw JSON
-    ds = load_dataset("json", data_files=Config.dataset_path) 
-    
-    # Handle split structure
-    if 'train' in ds:
-        ds_train = ds['train']
-    else:
-        ds_train = ds['train'] # Usually 'train' is default split for generic files
-        
-    # Create Validation Split (The "Compass")
-    ds = ds_train.train_test_split(test_size=0.1, seed=42)
-    
-    train_raw = ds['train']
-    val_raw = ds['test']
+    # --- UPDATED LOADING LOGIC ---
+    print(f"Loading Candidates from {Config.train_path}...")
+    ds_train = load_dataset("json", data_files=Config.train_path)
+    # Handle if dataset is nested under 'train' or root
+    train_raw = ds_train['train'] if 'train' in ds_train else ds_train
+
+    print(f"Loading Compass from {Config.val_path}...")
+    ds_val = load_dataset("json", data_files=Config.val_path)
+    val_raw = ds_val['train'] if 'train' in ds_val else ds_val
+    # -----------------------------
     
     # Debug limits
     if Config.DEBUG_MODE:
-        print(f"⚠️ DEBUG MODE: Truncating data to {Config.debug_train_size} samples.")
+        print(f"⚠️ DEBUG MODE: Truncating data.")
         train_raw = train_raw.select(range(min(len(train_raw), Config.debug_train_size)))
         val_raw = val_raw.select(range(min(len(val_raw), Config.debug_val_size)))
 
     def format_dpo(ex):
-        # Formatting for SFT / Influence
+        # ... (Same formatting logic as before) ...
         instr = ex.get('instruction', '')
         inp = ex.get('input', '')
         chosen = ex.get('chosen', '')
         
-        # Simple Chat Template Format
         text = f"<|user|>\n{instr} {inp}\n<|assistant|>\n{chosen}" + tokenizer.eos_token
-        
         out = tokenizer(text, truncation=True, max_length=512, padding="max_length")
         out["labels"] = out["input_ids"].copy()
         return out
@@ -268,15 +261,15 @@ def main():
     print(f"\nDone! Saved to {csv_path}")
 
     # 7. Show Top Results
-    print("\n--- Most Helpful Samples (Highest Score) ---")
-    top_helpful = df.sort_values("score_datainf", ascending=False).head(3)
-    for idx, row in top_helpful.iterrows():
-        print(f"[Score: {row['score_datainf']:.4f}] {row['instruction'][:100]}...")
+    # print("\n--- Most Helpful Samples (Highest Score) ---")
+    # top_helpful = df.sort_values("score_datainf", ascending=False).head(3)
+    # for idx, row in top_helpful.iterrows():
+    #     print(f"[Score: {row['score_datainf']:.4f}] {row['instruction'][:100]}...")
 
-    print("\n--- Least Helpful / Harmful Samples (Lowest Score) ---")
-    top_harmful = df.sort_values("score_datainf", ascending=True).head(3)
-    for idx, row in top_harmful.iterrows():
-        print(f"[Score: {row['score_datainf']:.4f}] {row['instruction'][:100]}...")
+    # print("\n--- Least Helpful / Harmful Samples (Lowest Score) ---")
+    # top_harmful = df.sort_values("score_datainf", ascending=True).head(3)
+    # for idx, row in top_harmful.iterrows():
+    #     print(f"[Score: {row['score_datainf']:.4f}] {row['instruction'][:100]}...")
 
 if __name__ == "__main__":
     main()
