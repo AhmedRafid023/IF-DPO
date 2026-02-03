@@ -26,3 +26,6 @@ nltk>=3.8.1
 torch>=2.1.0
 datasets>=2.14.0
 kronfluence>=0.0.35
+lm-eval==0.4.4
+# alpaca-eval>=0.6.2
+openai>=2.16.0
