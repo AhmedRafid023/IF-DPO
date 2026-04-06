@@ -18,13 +18,13 @@ class Config:
     # train_sft split  → candidates to be scored
     # test_sft split   → validation compass (what we want the model to do well on)
     HF_DATASET   = "HuggingFaceH4/ultrafeedback_binarized"
-    TRAIN_SPLIT  = "train_sft"
-    VAL_SPLIT    = "test_sft"
+    TRAIN_SPLIT  = "train_prefs"
+    VAL_SPLIT    = "test_prefs"
 
     # LoRA — influence is computed only over LoRA params (full model is too expensive)
-    LORA_RANK    = 8
-    LORA_ALPHA   = 16
-    LORA_TARGETS = ["q_proj", "v_proj"]
+    LORA_RANK    = 16
+    LORA_ALPHA   = 32
+    LORA_TARGETS = "all"
 
     # Output
     OUTPUT_DIR   = "influence_scoring_results"
@@ -156,8 +156,11 @@ def load_data(tokenizer):
 
     def format_example(ex):
         """
-        UltraFeedback SFT split stores conversations in 'chosen' as a list of
-        {role, content} dicts. We format as a simple user/assistant exchange.
+        train_prefs / test_prefs splits store conversations in 'chosen' as a list
+        of {role, content} dicts — same structure as the sft splits.
+        We use only the 'chosen' column (the higher-quality response) for gradient
+        computation. The influence score tells us how helpful each chosen response
+        is for the validation set — we are NOT training on rejected here.
         """
         messages = ex.get("chosen", [])
         user_msg = ""
@@ -168,12 +171,17 @@ def load_data(tokenizer):
             elif msg["role"] == "assistant":
                 asst_msg = msg["content"]
 
+        # Skip malformed examples silently — collator will handle empty tensors
+        if not user_msg or not asst_msg:
+            user_msg = user_msg or "empty"
+            asst_msg = asst_msg or "empty"
+
         text = (
             f"<|start_header_id|>user<|end_header_id|>\n\n{user_msg}<|eot_id|>"
             f"<|start_header_id|>assistant<|end_header_id|>\n\n{asst_msg}<|eot_id|>"
         )
-        out          = tokenizer(text, truncation=True, max_length=Config.MAX_LENGTH,
-                                 padding="max_length")
+        out           = tokenizer(text, truncation=True, max_length=Config.MAX_LENGTH,
+                                  padding="max_length")
         out["labels"] = out["input_ids"].copy()
         return out
 
