@@ -1,73 +1,121 @@
 import lm_eval
 import json
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
 
-# --- Configuration ---
-MODEL_PATH = "allenai/Llama-3.1-Tulu-3-8B-SFT"
-# ADAPTER_PATH = "output/tulu-dpo-lora"   # set to None if no LoRA
-BATCH_SIZE = 4
-DEVICE = "cuda:0"
-OUTPUT_DIR = "prediction/mmlu-5shot-10task"
+# ── Config — edit before running ──────────────────────────────────────────────
+class EvalConfig:
+    MODEL_PATH   = "allenai/Llama-3.1-Tulu-3-8B-SFT"
+    ADAPTER_PATH = None                              # set to adapter path if using DPO LoRA
+    OUTPUT_DIR   = "prediction/mmlu"
+    BATCH_SIZE   = 4
+    DEVICE       = "cuda"
+    NUM_FEWSHOT  = 5
+    LIMIT        = None                              # set to int (e.g. 50) for quick test
 
-# 🔟 Mini-MMLU task subset (diverse + commonly used)
-MMLU_10_TASKS = [
-    "mmlu_college_computer_science",
-    "mmlu_high_school_mathematics",
-    "mmlu_high_school_physics",
-    "mmlu_college_chemistry",
-    "mmlu_electrical_engineering",
-    "mmlu_professional_law",
-    "mmlu_professional_medicine",
-    "mmlu_econometrics",
-    "mmlu_philosophy",
-    "mmlu_world_religions",
-]
+    # All 57 canonical MMLU subjects
+    TASKS = [
+        "mmlu_abstract_algebra",
+        "mmlu_anatomy",
+        "mmlu_astronomy",
+        "mmlu_business_ethics",
+        "mmlu_clinical_knowledge",
+        "mmlu_college_biology",
+        "mmlu_college_chemistry",
+        "mmlu_college_computer_science",
+        "mmlu_college_mathematics",
+        "mmlu_college_medicine",
+        "mmlu_college_physics",
+        "mmlu_computer_security",
+        "mmlu_conceptual_physics",
+        "mmlu_econometrics",
+        "mmlu_electrical_engineering",
+        "mmlu_elementary_mathematics",
+        "mmlu_formal_logic",
+        "mmlu_global_facts",
+        "mmlu_high_school_biology",
+        "mmlu_high_school_chemistry",
+        "mmlu_high_school_computer_science",
+        "mmlu_high_school_european_history",
+        "mmlu_high_school_geography",
+        "mmlu_high_school_government_and_politics",
+        "mmlu_high_school_macroeconomics",
+        "mmlu_high_school_mathematics",
+        "mmlu_high_school_microeconomics",
+        "mmlu_high_school_physics",
+        "mmlu_high_school_psychology",
+        "mmlu_high_school_statistics",
+        "mmlu_high_school_us_history",
+        "mmlu_high_school_world_history",
+        "mmlu_human_aging",
+        "mmlu_human_sexuality",
+        "mmlu_international_law",
+        "mmlu_jurisprudence",
+        "mmlu_logical_fallacies",
+        "mmlu_machine_learning",
+        "mmlu_management",
+        "mmlu_marketing",
+        "mmlu_medical_genetics",
+        "mmlu_miscellaneous",
+        "mmlu_moral_disputes",
+        "mmlu_moral_scenarios",
+        "mmlu_nutrition",
+        "mmlu_philosophy",
+        "mmlu_prehistory",
+        "mmlu_professional_accounting",
+        "mmlu_professional_law",
+        "mmlu_professional_medicine",
+        "mmlu_professional_psychology",
+        "mmlu_public_relations",
+        "mmlu_security_studies",
+        "mmlu_sociology",
+        "mmlu_us_foreign_policy",
+        "mmlu_virology",
+        "mmlu_world_religions",
+    ]
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 def main():
-    print(f"🚀 Base model: {MODEL_PATH}")
-    print("🎯 Evaluation mode: 5-SHOT Mini-MMLU (10 tasks)")
-    # if ADAPTER_PATH:
-    #     print(f"🧩 LoRA adapter: {ADAPTER_PATH}")
+    os.makedirs(EvalConfig.OUTPUT_DIR, exist_ok=True)
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    print(f"🚀 Model: {EvalConfig.MODEL_PATH}")
+    print(f"🎯 Evaluation: {EvalConfig.NUM_FEWSHOT}-shot MMLU (all {len(EvalConfig.TASKS)} subjects)")
 
-    # --- Model args (minimal LoRA switch) ---
-    model_args = f"pretrained={MODEL_PATH},trust_remote_code=True,dtype=bfloat16"
-    # if ADAPTER_PATH:
-    #     model_args += f",peft={ADAPTER_PATH}"
+    model_args = f"pretrained={EvalConfig.MODEL_PATH},dtype=bfloat16"
+    if EvalConfig.ADAPTER_PATH:
+        print(f"🧩 Adapter: {EvalConfig.ADAPTER_PATH}")
+        model_args += f",peft={EvalConfig.ADAPTER_PATH}"
 
     results = lm_eval.simple_evaluate(
         model="hf",
         model_args=model_args,
-        tasks=MMLU_10_TASKS,
-        num_fewshot=5,
-        batch_size=BATCH_SIZE,
-        device=DEVICE,
-        limit=50,   # 🔥 remove or increase (100) for stronger signal
+        tasks=EvalConfig.TASKS,
+        num_fewshot=EvalConfig.NUM_FEWSHOT,
+        batch_size=EvalConfig.BATCH_SIZE,
+        device=EvalConfig.DEVICE,
+        limit=EvalConfig.LIMIT,
     )
 
-    # --- Save & report ---
-    if results is not None:
-        scores = []
-        for task in MMLU_10_TASKS:
-            acc = results["results"][task]["acc,none"] * 100
-            scores.append(acc)
-            print(f"{task}: {acc:.2f}%")
+    scores = []
+    print(f"\n{'='*60}")
+    print(f"  MMLU Results ({EvalConfig.NUM_FEWSHOT}-shot) — all {len(EvalConfig.TASKS)} subjects")
+    print(f"{'='*60}")
+    for task in EvalConfig.TASKS:
+        acc = results["results"][task]["acc,none"] * 100
+        scores.append(acc)
+        print(f"  {task.replace('mmlu_', ''):<45} {acc:.2f}%")
 
-        avg_score = sum(scores) / len(scores)
+    avg = sum(scores) / len(scores)
+    print(f"{'─'*60}")
+    print(f"  {'Average':<45} {avg:.2f}%")
+    print(f"{'='*60}")
 
-        print("\n" + "=" * 60)
-        print(f"🏆 Average 5-SHOT Mini-MMLU (10 tasks): {avg_score:.2f}%")
-        print("=" * 60)
+    output_path = os.path.join(EvalConfig.OUTPUT_DIR, "mmlu_results.json")
+    with open(output_path, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    print(f"✅ Results saved to {output_path}")
 
-        output_file = os.path.join(OUTPUT_DIR, "mmlu_5shot_10task.json")
-        with open(output_file, "w") as f:
-            json.dump(results, f, indent=2, default=str)
-
-        print(f"✅ Results saved to: {output_file}")
 
 if __name__ == "__main__":
     main()

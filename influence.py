@@ -1,275 +1,271 @@
 import os
 import torch
-import torch.nn as nn
 import pandas as pd
 import numpy as np
-import gc
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer, DataCollatorForLanguageModeling
 from datasets import load_dataset
 from peft import get_peft_model, LoraConfig, TaskType
 
-# =========================================
-# 1. CONFIGURATION
-# =========================================
+
+# ── Config — edit before running ──────────────────────────────────────────────
 class Config:
-    # --- Set to False for the full run ---
-    DEBUG_MODE = True 
+    # Model
+    MODEL_NAME   = "allenai/Llama-3.1-Tulu-3-8B-SFT"
 
-    # --- Path Settings ---
-    # Update this to point to your actual file location
-    train_path = "data/train.json"  # <--- UPDATED: Source for scoring
-    val_path = "data/test.json"     # <--- ADDED: Source for validation (Compass)
-    output_dir = "./influence_scoring_results"
+    # UltraFeedback splits
+    # train_sft split  → candidates to be scored
+    # test_sft split   → validation compass (what we want the model to do well on)
+    HF_DATASET   = "HuggingFaceH4/ultrafeedback_binarized"
+    TRAIN_SPLIT  = "train_sft"
+    VAL_SPLIT    = "test_sft"
 
-    # --- Model Settings ---
-    # Updated to the requested Tulu 3 model
-    model_name = "allenai/Llama-3.1-Tulu-3-8B-SFT" 
-    
-    # --- LoRA Settings ---
-    lora_rank = 8
-    target_modules = ["q_proj", "v_proj"] 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    # --- Compute Settings ---
-    dtype = torch.bfloat16 # Use bfloat16 for Llama 3 to save memory
-    
-    # --- Debug Limits ---
-    if DEBUG_MODE:
-        debug_train_size = 50
-        debug_val_size = 10
-    else:
-        debug_train_size = None
-        debug_val_size = None
+    # LoRA — influence is computed only over LoRA params (full model is too expensive)
+    LORA_RANK    = 8
+    LORA_ALPHA   = 16
+    LORA_TARGETS = ["q_proj", "v_proj"]
 
-# =========================================
-# 2. DATA INFLUENCE ENGINE (Manual Implementation)
-# =========================================
+    # Output
+    OUTPUT_DIR   = "influence_scoring_results"
+    OUTPUT_CSV   = "influence_comparison.csv"
+
+    # Compute
+    DTYPE        = torch.bfloat16
+    MAX_LENGTH   = 512
+    LAMBDA_PARAM = 1000          # damping factor denominator
+
+    # Set to an int (e.g. 200) for a quick smoke test, None for full dataset
+    DEBUG_TRAIN  = None
+    DEBUG_VAL    = None
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+# ── DataInf Engine ─────────────────────────────────────────────────────────────
+
 class DataInfEngine:
     def __init__(self, model, device):
-        self.model = model
-        self.device = device
+        self.model        = model
+        self.device       = device
         self.val_grad_avg = None
 
-    def get_flattened_grad(self):
-        """Extracts and flattens gradients from trainable (LoRA) parameters."""
-        grads = []
-        for n, p in self.model.named_parameters():
-            if p.requires_grad and p.grad is not None:
-                grads.append(p.grad.view(-1))
-        if not grads:
-            return None
-        return torch.cat(grads)
+    def _flat_grad(self):
+        grads = [p.grad.view(-1) for _, p in self.model.named_parameters()
+                 if p.requires_grad and p.grad is not None]
+        return torch.cat(grads) if grads else None
 
     def compute_val_grad_avg(self, val_loader):
-        """Computes the average gradient of the validation set (The 'Compass')."""
-        print(" [DataInf] Computing Validation Gradient Average...")
+        """Average gradient over the validation set — the 'compass' direction."""
+        print("\n[DataInf] Computing validation gradient average...")
         self.model.eval()
         self.model.zero_grad()
         total_grad = None
-        count = 0
-        
-        for batch in tqdm(val_loader, desc="Val Grads"):
+        count      = 0
+
+        for batch in tqdm(val_loader, desc="Val grads"):
             batch = {k: v.to(self.device) for k, v in batch.items()}
-            outputs = self.model(**batch)
-            loss = outputs.loss
+            loss  = self.model(**batch).loss
             loss.backward()
-            
-            flat_grad = self.get_flattened_grad()
-            if flat_grad is not None:
-                if total_grad is None:
-                    total_grad = torch.zeros_like(flat_grad)
-                total_grad += flat_grad
+
+            g = self._flat_grad()
+            if g is not None:
+                total_grad = g.clone() if total_grad is None else total_grad + g
                 count += 1
-            
             self.model.zero_grad()
-            
-            # [Optional] Clear cache to save VRAM on big models
-            # torch.cuda.empty_cache() 
-            
+
         if count == 0:
-            raise ValueError("No gradients computed! Check if LoRA is active.")
-            
+            raise ValueError("No gradients computed — check LoRA is active.")
+
         self.val_grad_avg = total_grad / count
+        print(f"   Validation gradient computed over {count} batches.")
         return self.val_grad_avg
 
-    def compute_datainf_scores(self, train_loader, lambda_const_param=1000):
-        """Computes influence scores for training samples."""
-        if self.val_grad_avg is None: 
-            raise ValueError("Run compute_val_grad_avg first!")
-            
-        print(" [DataInf] Computing Scores...")
+    def compute_scores(self, train_loader):
+        """
+        Two-pass DataInf scoring.
+
+        Pass 1 — estimate lambda (damping factor) from average squared gradient norm.
+        Pass 2 — for each training sample compute:
+                    score = g · H⁻¹v
+                  using the first-order Woodbury approximation:
+                    H⁻¹v ≈ (v - c·g) / λ,  where c = (g·v) / (λ + ‖g‖²)
+        Higher score = more helpful for the validation set.
+        """
+        if self.val_grad_avg is None:
+            raise ValueError("Run compute_val_grad_avg first.")
+
+        print("\n[DataInf] Pass 1 — estimating lambda...")
         self.model.eval()
-        scores = {}
-        
-        # --- Pass 1: Estimate Lambda (Damping Factor) ---
         squared_norms = []
-        for i, batch in enumerate(tqdm(train_loader, desc="Pass 1 (Lambda)")):
+
+        for batch in tqdm(train_loader, desc="Pass 1 (lambda)"):
             batch = {k: v.to(self.device) for k, v in batch.items()}
             self.model.zero_grad()
-            outputs = self.model(**batch)
-            loss = outputs.loss
-            loss.backward()
-            
-            g = self.get_flattened_grad()
+            self.model(**batch).loss.backward()
+            g = self._flat_grad()
             if g is not None:
                 squared_norms.append(torch.sum(g ** 2).item())
             self.model.zero_grad()
-            
-        if not squared_norms:
-             raise ValueError("No gradients found during Pass 1.")
 
-        avg_squared_norm = np.mean(squared_norms)
-        lambda_const = avg_squared_norm / lambda_const_param
-        
-        # --- Pass 2: Compute Influence Scores ---
-        v = self.val_grad_avg
-        for i, batch in enumerate(tqdm(train_loader, desc="Pass 2 (Scoring)")):
-            batch = {k: v.to(self.device) for k, v in batch.items()}
+        if not squared_norms:
+            raise ValueError("No gradients in Pass 1.")
+
+        lam = np.mean(squared_norms) / Config.LAMBDA_PARAM
+        print(f"   Lambda = {lam:.6f}")
+
+        print("\n[DataInf] Pass 2 — computing influence scores...")
+        v      = self.val_grad_avg
+        scores = {}
+
+        for i, batch in enumerate(tqdm(train_loader, desc="Pass 2 (scores)")):
+            batch = {k: v_.to(self.device) for k, v_ in batch.items()}
             self.model.zero_grad()
-            outputs = self.model(**batch)
-            loss = outputs.loss
-            loss.backward()
-            
-            g = self.get_flattened_grad()
-            
-            # Influence Formula: - (Gradient * HVP)
-            # Using First-Order approximation for speed/memory on large models
-            g_dot_v = torch.dot(v, g)
+            self.model(**batch).loss.backward()
+            g = self._flat_grad()
+            if g is None:
+                scores[i] = 0.0
+                self.model.zero_grad()
+                continue
+
+            g_dot_v  = torch.dot(v, g)
             g_norm_sq = torch.sum(g ** 2)
-            
-            # Approximate Inverse Hessian Vector Product (Woodbury Identity simplified)
-            c = g_dot_v / (lambda_const + g_norm_sq)
-            hvp = (v - c * g) / lambda_const
-            
-            # Score = - (g * hvp)
-            # Negative because influence measures effect on LOSS. 
-            # We want to decrease val loss, so we look for highly negative influence?
-            # Convention: High positive score = "Helpful for Val set"
-            scores[i] = torch.dot(g, hvp).item() 
-            
+            c        = g_dot_v / (lam + g_norm_sq)
+            hvp      = (v - c * g) / lam
+            scores[i] = torch.dot(g, hvp).item()
+
             self.model.zero_grad()
-            
+
         return scores
 
-# =========================================
-# 3. DATA LOADING
-# =========================================
-def get_data():
-    tokenizer = AutoTokenizer.from_pretrained(Config.model_name)
-    if tokenizer.pad_token is None: 
-        tokenizer.pad_token = tokenizer.eos_token
-    
-    # --- UPDATED LOADING LOGIC ---
-    print(f"Loading Candidates from {Config.train_path}...")
-    ds_train = load_dataset("json", data_files=Config.train_path)
-    # Handle if dataset is nested under 'train' or root
-    train_raw = ds_train['train'] if 'train' in ds_train else ds_train
 
-    print(f"Loading Compass from {Config.val_path}...")
-    ds_val = load_dataset("json", data_files=Config.val_path)
-    val_raw = ds_val['train'] if 'train' in ds_val else ds_val
-    # -----------------------------
-    
-    # Debug limits
-    if Config.DEBUG_MODE:
-        print(f"⚠️ DEBUG MODE: Truncating data.")
-        train_raw = train_raw.select(range(min(len(train_raw), Config.debug_train_size)))
-        val_raw = val_raw.select(range(min(len(val_raw), Config.debug_val_size)))
+# ── Data loading ───────────────────────────────────────────────────────────────
 
-    def format_dpo(ex):
-        # ... (Same formatting logic as before) ...
-        instr = ex.get('instruction', '')
-        inp = ex.get('input', '')
-        chosen = ex.get('chosen', '')
-        
-        text = f"<|user|>\n{instr} {inp}\n<|assistant|>\n{chosen}" + tokenizer.eos_token
-        out = tokenizer(text, truncation=True, max_length=512, padding="max_length")
+def load_data(tokenizer):
+    print(f"\nLoading {Config.HF_DATASET}...")
+    ds_train = load_dataset(Config.HF_DATASET, split=Config.TRAIN_SPLIT)
+    ds_val   = load_dataset(Config.HF_DATASET, split=Config.VAL_SPLIT)
+
+    if Config.DEBUG_TRAIN:
+        ds_train = ds_train.select(range(min(len(ds_train), Config.DEBUG_TRAIN)))
+        print(f"⚠️  Debug: using {len(ds_train)} training examples.")
+    if Config.DEBUG_VAL:
+        ds_val = ds_val.select(range(min(len(ds_val), Config.DEBUG_VAL)))
+        print(f"⚠️  Debug: using {len(ds_val)} validation examples.")
+
+    print(f"   Train: {len(ds_train)} | Val: {len(ds_val)}")
+
+    def format_example(ex):
+        """
+        UltraFeedback SFT split stores conversations in 'chosen' as a list of
+        {role, content} dicts. We format as a simple user/assistant exchange.
+        """
+        messages = ex.get("chosen", [])
+        user_msg = ""
+        asst_msg = ""
+        for msg in messages:
+            if msg["role"] == "user":
+                user_msg = msg["content"]
+            elif msg["role"] == "assistant":
+                asst_msg = msg["content"]
+
+        text = (
+            f"<|start_header_id|>user<|end_header_id|>\n\n{user_msg}<|eot_id|>"
+            f"<|start_header_id|>assistant<|end_header_id|>\n\n{asst_msg}<|eot_id|>"
+        )
+        out          = tokenizer(text, truncation=True, max_length=Config.MAX_LENGTH,
+                                 padding="max_length")
         out["labels"] = out["input_ids"].copy()
         return out
 
-    train_ds = train_raw.map(format_dpo)
-    val_ds = val_raw.map(format_dpo)
-    
     cols = ["input_ids", "attention_mask", "labels"]
-    train_ds.set_format("torch", columns=cols)
-    val_ds.set_format("torch", columns=cols)
-    
-    return train_ds, val_ds, tokenizer, train_raw
 
-# =========================================
-# 4. MAIN EXECUTION
-# =========================================
+    train_tokenized = ds_train.map(format_example, desc="Tokenising train")
+    train_tokenized.set_format("torch", columns=cols)
+
+    val_tokenized = ds_val.map(format_example, desc="Tokenising val")
+    val_tokenized.set_format("torch", columns=cols)
+
+    return train_tokenized, val_tokenized, ds_train
+
+
+# ── Main ───────────────────────────────────────────────────────────────────────
+
 def main():
-    os.makedirs(Config.output_dir, exist_ok=True)
-    
-    # 1. Load Data
-    train_ds, val_ds, tokenizer, train_raw = get_data()
+    os.makedirs(Config.OUTPUT_DIR, exist_ok=True)
+
+    # Tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(Config.MODEL_NAME)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Data
+    train_ds, val_ds, train_raw = load_data(tokenizer)
     collate = DataCollatorForLanguageModeling(tokenizer, mlm=False)
-    
-    # 2. Load Model
-    print(f"Loading Model: {Config.model_name}...")
+
+    train_loader = DataLoader(train_ds, batch_size=1, collate_fn=collate, shuffle=False)
+    val_loader   = DataLoader(val_ds,   batch_size=1, collate_fn=collate, shuffle=False)
+
+    # Model + LoRA
+    print(f"\nLoading model: {Config.MODEL_NAME}...")
     model = AutoModelForCausalLM.from_pretrained(
-        Config.model_name, 
-        torch_dtype=Config.dtype,
-        device_map="auto" # Auto-distribute to GPU
+        Config.MODEL_NAME,
+        torch_dtype=Config.DTYPE,
+        device_map="auto",
     )
-    
-    # 3. Attach LoRA
-    # Influence functions are too expensive for full fine-tuning
-    # We calculate influence ONLY on the LoRA adapters
+
     peft_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM, 
-        r=Config.lora_rank, 
-        target_modules=Config.target_modules, 
-        lora_alpha=16
+        task_type=TaskType.CAUSAL_LM,
+        r=Config.LORA_RANK,
+        lora_alpha=Config.LORA_ALPHA,
+        target_modules=Config.LORA_TARGETS,
     )
     model = get_peft_model(model, peft_config)
-    print(f"Trainable Parameters (Influence Target): {model.print_trainable_parameters()}")
-    
-    # 4. Prepare Loaders (Batch Size 1 is safest for gradients)
-    train_loader_single = DataLoader(train_ds, batch_size=1, collate_fn=collate, shuffle=False)
-    val_loader_single = DataLoader(val_ds, batch_size=1, collate_fn=collate, shuffle=False)
-    
-    # 5. Run Influence Engine
-    print("\n=== RUNNING DATAINF ESTIMATION ===")
-    datainf_engine = DataInfEngine(model, Config.device)
-    
-    # Step A: Compute Validation Gradient (Target Direction)
-    datainf_engine.compute_val_grad_avg(val_loader_single)
-    
-    # Step B: Score Training Data
-    scores_datainf = datainf_engine.compute_datainf_scores(train_loader_single)
+    model.print_trainable_parameters()
 
-    # 6. Save Results
-    # Handle potential missing keys if using different dataset format
-    try:
-        rejected_col = train_raw["rejected"]
-    except KeyError:
-        rejected_col = [""] * len(train_raw)
+    device = next(model.parameters()).device
 
+    # Run DataInf
+    engine = DataInfEngine(model, device)
+    engine.compute_val_grad_avg(val_loader)
+    scores = engine.compute_scores(train_loader)
+
+    # Extract chosen text for each training example
+    def get_chosen_text(ex):
+        for msg in ex.get("chosen", []):
+            if msg["role"] == "assistant":
+                return msg["content"]
+        return ""
+
+    def get_prompt_text(ex):
+        for msg in ex.get("chosen", []):
+            if msg["role"] == "user":
+                return msg["content"]
+        return ""
+
+    # Save CSV
     df = pd.DataFrame({
-        "instruction": train_raw["instruction"],
-        "chosen": train_raw["chosen"],
-        "rejected": rejected_col,
-        "score_datainf": [scores_datainf.get(i, 0.0) for i in range(len(train_raw))]
+        "instruction": [get_prompt_text(ex) for ex in train_raw],
+        "input":       [""] * len(train_raw),
+        "chosen":      [get_chosen_text(ex) for ex in train_raw],
+        "rejected":    [get_chosen_text(ex) for ex in train_raw],   # placeholder, overwritten by DPO scripts
+        "score_datainf": [scores.get(i, 0.0) for i in range(len(train_raw))],
     })
-    
-    csv_path = os.path.join(Config.output_dir, "influence_comparison.csv")
+
+    csv_path = os.path.join(Config.OUTPUT_DIR, Config.OUTPUT_CSV)
     df.to_csv(csv_path, index=False)
-    print(f"\nDone! Saved to {csv_path}")
 
-    # 7. Show Top Results
-    # print("\n--- Most Helpful Samples (Highest Score) ---")
-    # top_helpful = df.sort_values("score_datainf", ascending=False).head(3)
-    # for idx, row in top_helpful.iterrows():
-    #     print(f"[Score: {row['score_datainf']:.4f}] {row['instruction'][:100]}...")
+    print(f"\n{'='*50}")
+    print(f"  Influence scoring complete")
+    print(f"{'='*50}")
+    print(f"  Examples scored : {len(df)}")
+    print(f"  CSV saved to    : {csv_path}")
+    print(f"\n  Top 3 most helpful samples:")
+    for _, row in df.nlargest(3, "score_datainf").iterrows():
+        print(f"    [{row['score_datainf']:.4f}] {row['instruction'][:80]}...")
+    print(f"\n  Top 3 least helpful samples:")
+    for _, row in df.nsmallest(3, "score_datainf").iterrows():
+        print(f"    [{row['score_datainf']:.4f}] {row['instruction'][:80]}...")
 
-    # print("\n--- Least Helpful / Harmful Samples (Lowest Score) ---")
-    # top_harmful = df.sort_values("score_datainf", ascending=True).head(3)
-    # for idx, row in top_harmful.iterrows():
-    #     print(f"[Score: {row['score_datainf']:.4f}] {row['instruction'][:100]}...")
 
 if __name__ == "__main__":
     main()

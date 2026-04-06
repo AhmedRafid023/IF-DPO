@@ -158,6 +158,7 @@ prediction/
 data/
 checkpoints/
 logs/
+eval_results
 runs/
 wandb/
 mlruns/

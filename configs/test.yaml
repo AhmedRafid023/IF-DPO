@@ -1,21 +1,24 @@
 ### Model
 model_name_or_path: allenai/Llama-3.1-Tulu-3-8B-SFT
-adapter_name_or_path: output/llama3-dpo  # <--- Loads the adapter we just trained
+adapter_name_or_path: output/tulu3-8b-dpo
+trust_remote_code: true
 
 ### Method
 stage: sft
-do_predict: true                      # <--- key: Predict mode
+do_predict: true
 finetuning_type: lora
 predict_with_generate: true
 
 ### Dataset
-eval_dataset: dpo_test          # defined in dataset_info.json
+eval_dataset: ultrafeedback_test
 template: llama3
 cutoff_len: 1024
 overwrite_cache: true
 preprocessing_num_workers: 4
 
 ### Output
-output_dir: prediction/llama3-dpo
+output_dir: prediction/tulu3-8b-dpo
 overwrite_output_dir: true
+
+### Eval
 per_device_eval_batch_size: 16
