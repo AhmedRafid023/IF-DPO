@@ -24,11 +24,12 @@ class Config:
     # LoRA — influence is computed only over LoRA params (full model is too expensive)
     LORA_RANK    = 16
     LORA_ALPHA   = 32
-    LORA_TARGETS = "all"
+    LORA_TARGETS = ["q_proj", "v_proj"]
 
-    # Output
+
+    # Output (CHANGED TO JSONL)
     OUTPUT_DIR   = "influence_scoring_results"
-    OUTPUT_CSV   = "influence_comparison.csv"
+    OUTPUT_JSONL = "influence_comparison.jsonl"
 
     # Compute
     DTYPE        = torch.bfloat16
@@ -250,7 +251,7 @@ def main():
                 return msg["content"]
         return ""
 
-    # Save CSV
+    # Save as JSONL
     df = pd.DataFrame({
         "instruction": [get_prompt_text(ex) for ex in train_raw],
         "input":       [""] * len(train_raw),
@@ -259,14 +260,15 @@ def main():
         "score_datainf": [scores.get(i, 0.0) for i in range(len(train_raw))],
     })
 
-    csv_path = os.path.join(Config.OUTPUT_DIR, Config.OUTPUT_CSV)
-    df.to_csv(csv_path, index=False)
+    # CHANGED: Use JSONL export instead of CSV
+    jsonl_path = os.path.join(Config.OUTPUT_DIR, Config.OUTPUT_JSONL)
+    df.to_json(jsonl_path, orient="records", lines=True, force_ascii=False)
 
     print(f"\n{'='*50}")
     print(f"  Influence scoring complete")
     print(f"{'='*50}")
     print(f"  Examples scored : {len(df)}")
-    print(f"  CSV saved to    : {csv_path}")
+    print(f"  JSONL saved to  : {jsonl_path}")
     print(f"\n  Top 3 most helpful samples:")
     for _, row in df.nlargest(3, "score_datainf").iterrows():
         print(f"    [{row['score_datainf']:.4f}] {row['instruction'][:80]}...")

@@ -20,7 +20,8 @@ import pandas as pd
 
 # ── Config — edit before running ──────────────────────────────────────────────
 class Config:
-    CSV_INPUT      = "influence_scoring_results/influence_comparison.csv"
+    # CHANGED: Pointing to the new JSONL file
+    JSONL_INPUT    = "influence_scoring_results/influence_comparison.jsonl"
     OUTPUT_DIR     = "data"
     DATASET_INFO   = "data/dataset_info.json"
 
@@ -37,10 +38,11 @@ def clean_text(text):
     return text.replace("\u2028", " ").replace("\u2029", " ")
 
 
-def load_and_sort(csv_path: str) -> pd.DataFrame:
-    if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"CSV not found: {csv_path}\nRun influence_scoring.py first.")
-    df = pd.read_csv(csv_path).fillna("")
+def load_and_sort(file_path: str) -> pd.DataFrame:
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}\nRun influence_scoring.py first.")
+    # CHANGED: Read JSONL instead of CSV
+    df = pd.read_json(file_path, lines=True).fillna("")
     return df.sort_values("score_datainf", ascending=False).reset_index(drop=True)
 
 
@@ -122,8 +124,9 @@ def main():
                         default="both")
     args = parser.parse_args()
 
-    print(f"📂 Loading influence scores from {Config.CSV_INPUT}...")
-    df = load_and_sort(Config.CSV_INPUT)
+    # CHANGED: Reference Config.JSONL_INPUT
+    print(f"📂 Loading influence scores from {Config.JSONL_INPUT}...")
+    df = load_and_sort(Config.JSONL_INPUT)
     print(f"   {len(df)} examples loaded and sorted by influence score.")
 
     run_sym  = args.strategy in ("symmetric",     "both")
