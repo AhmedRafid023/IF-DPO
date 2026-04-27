@@ -1,0 +1,23 @@
+dataset: mmlu
+script: evaluate_mmlu.py
+
+# Shared evaluation parameters
+model_path: allenai/Llama-3.1-Tulu-3-8B-SFT
+batch_size: 4
+device: cuda
+num_fewshot: 5
+limit: null
+
+# Only adapter_path and output_dir vary across experiments
+experiments:
+  - name: base_sft
+    adapter_path: null
+    output_dir: prediction/mmlu/base_sft
+
+  - name: dpo
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-DPO
+    output_dir: prediction/mmlu/dpo
+
+  - name: uf_self_dpo
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-UF-Self-DPO
+    output_dir: prediction/mmlu/uf_self_dpo

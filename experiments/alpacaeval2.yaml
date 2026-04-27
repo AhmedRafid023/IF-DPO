@@ -1,0 +1,23 @@
+dataset: alpacaeval2
+script: run_alpacaeval2.py
+
+# Shared evaluation parameters
+model_path: allenai/Llama-3.1-Tulu-3-8B-SFT
+openai_model: gpt-4-turbo
+batch_size: 64
+max_samples: null
+skip_generation: false
+
+# Only adapter_path and output_dir vary across experiments
+experiments:
+  - name: base_sft
+    adapter_path: null
+    output_dir: prediction/alpacaeval2/base_sft
+
+  - name: dpo
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-DPO
+    output_dir: prediction/alpacaeval2/dpo
+
+  - name: uf_self_dpo
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-UF-Self-DPO
+    output_dir: prediction/alpacaeval2/uf_self_dpo

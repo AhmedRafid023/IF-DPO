@@ -118,4 +118,13 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--adapter_path", default=None)
+    parser.add_argument("--output_dir", default=None)
+    args = parser.parse_args()
+    if args.adapter_path is not None:
+        EvalConfig.ADAPTER_PATH = args.adapter_path
+    if args.output_dir is not None:
+        EvalConfig.OUTPUT_DIR = args.output_dir
     main()
