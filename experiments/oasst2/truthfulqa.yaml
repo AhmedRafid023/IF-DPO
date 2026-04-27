@@ -9,6 +9,10 @@ limit: null
 
 # Only adapter_path and output_dir vary across experiments
 experiments:
+  - name: oasst2_sft
+    adapter_path: null
+    output_dir: prediction/truthfulqa/oasst2_sft
+
   - name: oasst2_dpo
     adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-oasst2-DPO
     output_dir: prediction/truthfulqa/oasst2_dpo
