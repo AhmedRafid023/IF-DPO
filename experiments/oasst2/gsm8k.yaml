@@ -1,0 +1,28 @@
+dataset: gsm8k
+script: evaluate_gsm8k.py
+
+# Shared evaluation parameters
+model_path: allenai/Llama-3.1-Tulu-3-8B-SFT
+max_new_tokens: 512
+temperature: 0.0
+batch_size: 8
+limit: null
+seed: 42
+
+# Only adapter_path and output_dir vary across experiments
+experiments:
+  - name: oasst2_dpo
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-oasst2-DPO
+    output_dir: prediction/gsm8k/oasst2_dpo
+
+  - name: oasst2_self_dpo
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-oasst2-Self-DPO
+    output_dir: prediction/gsm8k/oasst2_self_dpo
+
+  - name: oasst2_if_dpo
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-oasst2-IF-DPO
+    output_dir: prediction/gsm8k/oasst2_if_dpo
+
+  - name: oasst_if_dpo_next
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-oasst-IF-DPO-next
+    output_dir: prediction/gsm8k/oasst_if_dpo_next
