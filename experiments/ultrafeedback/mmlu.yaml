@@ -21,3 +21,11 @@ experiments:
   - name: uf_self_dpo
     adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-UF-Self-DPO
     output_dir: prediction/mmlu/uf_self_dpo
+
+  - name: uf_if_dpo
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-uf-IF-DPO
+    output_dir: prediction/mmlu/uf_if_dpo
+
+  - name: uf_if_dpo_next
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-uf-IF-DPO-next
+    output_dir: prediction/mmlu/uf_if_dpo_next
