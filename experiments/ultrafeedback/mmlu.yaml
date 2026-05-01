@@ -10,22 +10,22 @@ limit: null
 
 # Only adapter_path and output_dir vary across experiments
 experiments:
-  - name: base_sft
-    adapter_path: null
-    output_dir: prediction/mmlu/base_sft
+  # - name: base_sft
+  #   adapter_path: null
+  #   output_dir: prediction/mmlu/base_sft
 
-  - name: dpo
-    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-DPO
-    output_dir: prediction/mmlu/dpo
+  # - name: dpo
+  #   adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-DPO
+  #   output_dir: prediction/mmlu/dpo
 
-  - name: uf_self_dpo
-    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-UF-Self-DPO
-    output_dir: prediction/mmlu/uf_self_dpo
+  # - name: uf_self_dpo
+  #   adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-UF-Self-DPO
+  #   output_dir: prediction/mmlu/uf_self_dpo
 
   - name: uf_if_dpo
-    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-uf-IF-DPO
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-UF-IF-Self-DPO
     output_dir: prediction/mmlu/uf_if_dpo
 
   - name: uf_if_dpo_next
-    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-uf-IF-DPO-next
+    adapter_path: iiCEMAN/Llama-3.1-Tulu-3-8B-UF-IF-DPO-NEXT
     output_dir: prediction/mmlu/uf_if_dpo_next
